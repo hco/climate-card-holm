@@ -6,7 +6,7 @@
 
 **Une carte clim / chauffage compacte et vivante : on voit tout de suite si ça chauffe, si ça refroidit, et on règle la consigne d'un geste.**
 
-HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (climatiseurs, pompes à chaleur, radiateurs connectés…). Elle tient à **deux côte à côte sur un téléphone**, s'étale joliment en **pleine largeur**, et son ambiance change selon ce que fait l'appareil : **braises** qui montent quand il chauffe, **flocons** quand il refroidit, sobre quand il est éteint.
+HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (climatiseurs, pompes à chaleur, radiateurs connectés…). Elle tient à **deux côte à côte sur un téléphone**, s'étale joliment en **pleine largeur**, et son ambiance change selon ce que fait l'appareil : **braises** qui montent quand il chauffe, **flocons** quand il refroidit, brume grise qui respire quand il est éteint.
 
 > ✨ **Zéro YAML.** On l'ajoute depuis le sélecteur de cartes, on choisit son appareil : c'est prêt.
 
@@ -14,19 +14,31 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 
 - 🔥❄️ **Ambiance selon l'usage** : lueur chaude et braises en chauffage, lueur froide et flocons en clim, animations **seulement quand l'appareil chauffe ou refroidit réellement** (sinon lueur apaisée).
 - 🎯 **Roue de consigne 270°** : on fait glisser le curseur, ou on ajuste au demi-degré avec − / +. La température actuelle est repérée sur la roue.
-- 🔘 **Modes en pastilles** : Éteint / Chauffage / Clim (et le mode en cours s'il est différent : chaud / froid, déshumidification, ventilation).
+- 🔘 **Modes en pastilles** : Éteint / Chauffage / Clim / **Ventilation** (si l'appareil sait ventiler), et le mode en cours s'il est différent (chaud / froid, déshumidification).
+- 🌬️ **Mode ventilation** : couleur vert d'eau, filets d'air qui traversent la carte ; sans consigne de température, la roue et les boutons − / + règlent la **vitesse de ventilation**.
 - 🌀 **Ventilation, préréglage, oscillation** verticale et horizontale : des puces compactes qui ouvrent un volet de choix. Seules les options que l'appareil connaît sont proposées.
 - ⚡ **Réponse immédiate** : l'écran change tout de suite, sans attendre l'appareil (idéal avec les clims pilotées par le cloud, souvent lentes à répondre).
 - 📱 **Deux tailles** : compacte (2 cartes par ligne sur mobile) ou large (roue à gauche, commandes à droite), automatiquement selon la place disponible.
-- 👆 Un toucher sur le nom ouvre la fiche de l'appareil dans Home Assistant.
+- 📏 **Vue compacte** (`layout: compact`) : sans la roue et très basse — la consigne − / + est au niveau du nom, les modes et options juste dessous ; en pleine largeur tout tient sur **une seule ligne**. S'adapte à la place disponible (options en icônes sur les cartes très étroites).
+- 🌡️ **Sonde au choix** et **graphique** : la température peut venir d'un autre capteur ; un toucher dessus ouvre l'historique (24 h par défaut, 6 h / 48 h / 7 j) avec la consigne et les périodes de chauffe / clim.
+- 🔒 **Consignes mini / maxi** : bornez la roue et les boutons (ex. 18 à 23 °C).
+- 👆 Un toucher sur le nom ouvre la fiche de l'appareil dans Home Assistant ; un toucher sur la température ouvre son historique.
 
 | Deux côte à côte (chauffage / clim) | Pleine largeur |
 |---|---|
 | ![Deux côte à côte](docs/images/cote-a-cote.png) | ![Pleine largeur](docs/images/pleine-largeur.png) |
 
-**Volet de choix (ventilation)**
+**Vue compacte** (`layout: compact`)
 
-![Volet de choix](docs/images/choix.png)
+![Vue compacte](docs/images/compacte.png)
+
+**Mode ventilation** (la roue règle la vitesse)
+
+![Mode ventilation](docs/images/ventilation.png)
+
+| Volet de choix (ventilation) | Historique de la température |
+|---|---|
+| ![Volet de choix](docs/images/choix.png) | ![Historique](docs/images/graphique.png) |
 
 ---
 
@@ -70,6 +82,10 @@ Dans un tableau de bord en sections, la carte prend par défaut une demi-largeur
 | `show_fan` | Puce **Ventilation** | `true` |
 | `show_preset` | Puce **Préréglage** (boost, absence, éco…) | `true` |
 | `show_swing` | Puces **Oscillation** verticale et horizontale | `true` |
+| `layout` | `full` (avec la roue) ou `compact` (en largeur, sans la roue) | `full` |
+| `min_temp` / `max_temp` | Consigne minimum / maximum autorisée (dans les limites de l'appareil) | limites de l'appareil |
+| `temperature_sensor` | Sonde de température affichée (sinon celle de l'appareil) | — |
+| `graph_hours` | Durée du graphique à l'ouverture (heures) | `24` |
 
 ```yaml
 type: custom:holm-climate-card
@@ -77,6 +93,19 @@ entity: climate.chambre
 name: Chambre
 show_swing: false
 ```
+
+Vue compacte avec une sonde et une plage de consigne :
+
+```yaml
+type: custom:holm-climate-card
+entity: climate.bureau
+layout: compact
+temperature_sensor: sensor.bureau_temperature
+min_temp: 18
+max_temp: 24
+```
+
+Un toucher sur la **température actuelle** ouvre l'historique : température (ou sonde), consigne en pointillés, périodes de chauffe et de clim, minimum / maximum / moyenne et durée de fonctionnement.
 
 ---
 

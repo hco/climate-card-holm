@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0
+- **Vue compacte** (`layout: compact`) : sans la roue, moins haute et en largeur — modes Éteint / Chauffe / Clim et consigne − / + sur une ligne, options à côté ; en pleine largeur tout tient sur une seule ligne ([#1](https://github.com/kaaribou/climate-card-holm/issues/1)).
+- **Ambiance « éteint »** : brume grise qui respire doucement et fines poussières, pour que la carte reste vivante même à l'arrêt.
+- **Consigne minimum / maximum** réglables dans la carte (`min_temp`, `max_temp`), appliquées à la roue et aux boutons ([#2](https://github.com/kaaribou/climate-card-holm/issues/2)).
+- **Mode ventilation** en 4ᵉ pastille (si l'appareil le propose) : couleur vert d'eau, filets d'air animés, et la roue comme les boutons − / + règlent la vitesse de ventilation quand il n'y a pas de consigne.
+- **Sonde de température au choix** (`temperature_sensor`) et **historique au toucher** : graphique 24 h par défaut (`graph_hours`, boutons 6 h / 24 h / 48 h / 7 j) avec consigne, périodes de chauffe / clim, min / max / moyenne ([#3](https://github.com/kaaribou/climate-card-holm/issues/3)).
+
 ## 1.0.0
 Première version publique.
 

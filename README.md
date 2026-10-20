@@ -22,6 +22,8 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 - 📏 **Vue compacte** (`layout: compact`) : sans la roue et très basse — la consigne − / + est au niveau du nom, les modes et options juste dessous ; en pleine largeur tout tient sur **une seule ligne**. S'adapte à la place disponible (options en icônes sur les cartes très étroites).
 - 🌡️ **Sonde au choix** et **graphique** : la température peut venir d'un autre capteur ; un toucher dessus ouvre l'historique (24 h par défaut, 6 h / 48 h / 7 j) avec la consigne et les périodes de chauffe / clim.
 - 🔒 **Consignes mini / maxi** : bornez la roue et les boutons (ex. 18 à 23 °C).
+- 🏷️ **Pastilles d'état** (`badges`) : jusqu'à 4 entités affichées sous le nom (fenêtre, présence, humidité…), pour n'importe quel thermostat.
+- 🧠 **Option Versatile Thermostat** (`vtherm: true`) : fenêtre ouverte (avec « Ignorer »), présence, mouvement, délestage, sécurité, verrou, raison de l'arrêt, **minuteur de préréglage** avec décompte, taux de chauffe et température extérieure. Désactivée par défaut : la carte reste simple.
 - 👆 Un toucher sur le nom ouvre la fiche de l'appareil dans Home Assistant ; un toucher sur la température ouvre son historique.
 
 | Deux côte à côte (chauffage / clim) | Pleine largeur |
@@ -39,6 +41,16 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 | Volet de choix (ventilation) | Historique de la température |
 |---|---|
 | ![Volet de choix](docs/images/choix.png) | ![Historique](docs/images/graphique.png) |
+
+### 🆕 Nouveautés de la 1.2.0
+
+**Option Versatile Thermostat** : état normal, fenêtre ouverte, minuteur de préréglage
+
+![Versatile Thermostat](docs/images/vtherm.png)
+
+**Pastilles d'état**, ici en vue compacte (VTherm en haut, thermostat classique avec une fenêtre et l'humidité en bas)
+
+![Pastilles d'état](docs/images/pastilles.png)
 
 ---
 
@@ -86,6 +98,8 @@ Dans un tableau de bord en sections, la carte prend par défaut une demi-largeur
 | `min_temp` / `max_temp` | Consigne minimum / maximum autorisée (dans les limites de l'appareil) | limites de l'appareil |
 | `temperature_sensor` | Sonde de température affichée (sinon celle de l'appareil) | — |
 | `graph_hours` | Durée du graphique à l'ouverture (heures) | `24` |
+| `badges` | Liste d'entités affichées en pastilles (4 au maximum) | — |
+| `vtherm` | Fonctions Versatile Thermostat (proposé dans l'éditeur seulement pour une entité VTherm) | `false` |
 
 ```yaml
 type: custom:holm-climate-card
@@ -107,6 +121,45 @@ max_temp: 24
 
 Un toucher sur la **température actuelle** ouvre l'historique : température (ou sonde), consigne en pointillés, périodes de chauffe et de clim, minimum / maximum / moyenne et durée de fonctionnement.
 
+### Pastilles d'état
+
+```yaml
+type: custom:holm-climate-card
+entity: climate.salon
+badges:
+  - binary_sensor.fenetre_salon
+  - sensor.salon_humidite
+```
+
+Une valeur numérique s'affiche avec son unité (bleu) ; un capteur actif (fenêtre ouverte, présence…) s'affiche en orange avec son nom ; inactif, seule l'icône reste. Un toucher ouvre la fiche de l'entité.
+
+---
+
+## Versatile Thermostat
+
+Pour les thermostats créés avec [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (VTherm), cochez **Fonctions Versatile Thermostat** dans l'éditeur (`vtherm: true`). L'option n'apparaît que si l'entité choisie est un VTherm ; sans elle, la carte reste exactement la même.
+
+```yaml
+type: custom:holm-climate-card
+entity: climate.salon_vtherm
+vtherm: true
+```
+
+| Ce que montre la carte | Détail |
+|---|---|
+| 🪟 **Fenêtre** | Pastille « Fenêtre ouverte » avec un bouton **Ignorer** (contournement de la détection), puis « Fenêtre ignorée » avec **Rétablir**. |
+| 🏠 **Présence / mouvement** | « Absent » quand la consigne d'absence s'applique, mouvement détecté dans la pièce. |
+| ⚡ **Délestage** | Pastille rouge et bordure de la carte rouge quand le chauffage est délesté. |
+| 🛡️ **Sécurité** | Sonde muette : chauffe de sécurité, signalée en rouge. |
+| 🔒 **Verrou** | Thermostat verrouillé. |
+| 💬 **Raison** | Sous le nom : pourquoi le thermostat est arrêté (fenêtre, délestage, absence…), ou le décompte du minuteur. |
+| ⏱️ **Minuteur** | Puce **Minuteur** : choisissez un préréglage (boost, confort…) et une durée (30 min à 4 h) ; le décompte s'affiche et le préréglage précédent revient tout seul. **Annuler** à tout moment. |
+| 🔥 **Chauffe** | Taux de chauffe du cycle en cours (et puissance moyenne si connue), température extérieure. |
+
+Seuls les éléments configurés dans votre VTherm sont affichés. Les préréglages Hors-gel, Délestage et Sécurité de VTherm ont leur icône et leur nom en français.
+
+> Ces fonctions ont été développées à partir de la documentation de Versatile Thermostat et testées avec des états simulés. Un retour d'utilisateur VTherm est le bienvenu dans les [issues](https://github.com/kaaribou/climate-card-holm/issues).
+
 ---
 
 ## FAQ / dépannage
@@ -116,6 +169,7 @@ Un toucher sur la **température actuelle** ouvre l'historique : température (o
 | Une puce n'apparaît pas | L'appareil ne propose pas cette option à Home Assistant (ex. pas de modes de ventilation sur un radiateur). |
 | Les animations ne se lancent pas | Elles ne tournent que quand l'appareil **chauffe ou refroidit réellement** (`hvac_action`). En veille, la lueur reste apaisée. Elles sont aussi coupées si votre système demande de réduire les animations. |
 | La consigne revient en arrière | L'appareil n'a pas accepté la valeur (hors plage min / max) : la carte réaffiche la valeur réelle au bout d'une vingtaine de secondes. |
+| L'option Versatile Thermostat n'apparaît pas | L'entité n'est pas reconnue comme un VTherm (attributs `is_window_configured`, `specific_states`… absents). Vous pouvez quand même ajouter `vtherm: true` en YAML. |
 | La nouvelle version ne s'affiche pas | Videz le cache (Ctrl + F5, ou « Recharger les ressources » dans l'application mobile). |
 
 ---
@@ -132,4 +186,6 @@ La carte vous plaît ? Vous pouvez m'offrir une bière 🍺
 
 Code : licence **MIT** — © kaaribou. Voir le [CHANGELOG](CHANGELOG.md).
 
-Fait partie de la collection **HOLM** : [Carburant HOLM](https://github.com/kaaribou/carburant-holm) · [HOLM Navbar Card](https://github.com/kaaribou/holm-navbar-card) · [HOLM Music Card](https://github.com/kaaribou/holm-music-card) · [HOLM Sentinel Card](https://github.com/kaaribou/holm-sentinel-card).
+Fait partie de **HOLM — Home Orchestration & Living Management** : la gestion et l'orchestration intelligente de la maison.
+
+Les autres projets : [Volets HOLM](https://github.com/kaaribou/volets-holm) · [Climat HOLM](https://github.com/kaaribou/climat-holm) · [Carburant HOLM](https://github.com/kaaribou/carburant-holm) · [Commandes à la maison HOLM](https://github.com/kaaribou/commandes-holm) · [HOLM LaMetric](https://github.com/kaaribou/lametric-holm) · [HOLM My Menu](https://github.com/kaaribou/holm-mymenu) · [HOLM Lektrico](https://github.com/kaaribou/lektrico-holm) · [HOLM Navbar Card](https://github.com/kaaribou/holm-navbar-card) · [HOLM Music Card](https://github.com/kaaribou/holm-music-card) · [HOLM Sentinel Card](https://github.com/kaaribou/holm-sentinel-card) · [HOLM Security Card](https://github.com/kaaribou/holm-security-card) · [HOLM Recordings Card](https://github.com/kaaribou/holm-recordings-card) · [HOLM Covers Card](https://github.com/kaaribou/holm-covers-card) · [HOLM Runtime Card](https://github.com/kaaribou/holm-runtime-card) · [HOLM Power Flow Card](https://github.com/kaaribou/holm-power-flow-card) · [HOLM Energy Cards](https://github.com/kaaribou/holm-energy-cards) · [HOLM Radiator Card](https://github.com/kaaribou/holm-radiator-card) · [HOLM Floor Card](https://github.com/kaaribou/holm-floor-card) · [HOLM Ecojoko Card](https://github.com/kaaribou/holm-ecojoko-card) · [HOLM Smoke Card](https://github.com/kaaribou/holm-smoke-card) · [HOLM BG Card](https://github.com/kaaribou/holm-bg-card).

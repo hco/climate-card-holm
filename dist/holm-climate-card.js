@@ -11,9 +11,13 @@
  * - Mises à jour optimistes (latence Daikin Cloud)
  * - Vue compacte (layout: compact), consignes mini / maxi, sonde de température
  *   au choix et graphique de température au toucher
+ * - Option Versatile Thermostat (vtherm: true) : pastilles fenêtre / présence /
+ *   mouvement / délestage / sécurité / verrou, raison de l'arrêt, preset
+ *   temporisé avec décompte, puissance de chauffe et température extérieure
+ * - Pastilles d'état configurables (badges) pour n'importe quel thermostat
  */
 (() => {
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const MODE_META = {
     off: { icon: "mdi:power", rgb: "150,160,178", label: "Éteint" },
     heat: { icon: "mdi:fire", rgb: "255,128,48", label: "Chauffe" },
@@ -69,7 +73,19 @@
     sleep: { icon: "mdi:sleep", label: "Nuit" },
     home: { icon: "mdi:home", label: "Maison" },
     activity: { icon: "mdi:run", label: "Activité" },
+    frost: { icon: "mdi:snowflake-thermometer", label: "Hors-gel" },
+    power: { icon: "mdi:flash-alert", label: "Délestage" },
+    safety: { icon: "mdi:shield-alert", label: "Sécurité" },
+    security: { icon: "mdi:shield-alert", label: "Sécurité" },
   };
+  // Versatile Thermostat : raisons d'arrêt / de mode (valeurs anglaises et françaises selon les versions)
+  const VT_REASON = {
+    window: "fenêtre ouverte", fenetre: "fenêtre ouverte", "fenêtre": "fenêtre ouverte",
+    "auto-start/stop": "arrêt automatique", auto_start_stop: "arrêt automatique",
+    sleep: "veille", sommeil: "veille", safety: "sécurité", central_mode: "mode central", "central mode": "mode central",
+  };
+  const VT_DURATIONS = [[30, "30 min"], [60, "1 h"], [120, "2 h"], [240, "4 h"]];
+  const durTxt = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? " " + String(m % 60).padStart(2, "0") : ""}` : `${Math.max(0, Math.round(m))} min`);
   const SWING_META = {
     off: { icon: "mdi:arrow-oscillating-off", label: "Fixe" },
     stop: { icon: "mdi:arrow-oscillating-off", label: "Fixe" },
@@ -199,6 +215,7 @@
             </div>
             <button class="hcur curbtn" id="hcur" title="Historique de la température"><ha-icon icon="mdi:home-thermometer-outline"></ha-icon><span id="hcurt"></span></button>
           </div>
+          <div class="vb" id="vb"></div>
           <div class="main">
             <div class="dialbox">
               <svg viewBox="0 0 200 200" id="dial">
@@ -232,6 +249,7 @@
                 </div>
               </div>
               <div class="chips" id="chips"></div>
+              <div class="vp" id="vp"></div>
             </div>
           </div>
         </div>
@@ -259,6 +277,19 @@
       $("plus").addEventListener("click", (e) => { e.stopPropagation(); this._nudge(1); });
       $("sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") this._closeSheet(); });
       $("sheet-x").addEventListener("click", () => this._closeSheet());
+      $("vb").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-act],[data-ent]");
+        if (!b) return;
+        e.stopPropagation();
+        if (b.dataset.act === "bypass-on" || b.dataset.act === "bypass-off") {
+          const on = b.dataset.act === "bypass-on";
+          this._vtOpt = { bypass: on, ts: Date.now() };
+          this._vtCall("set_window_bypass", { window_bypass: on });
+          this._render();
+        } else if (b.dataset.ent) {
+          this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: b.dataset.ent }, bubbles: true, composed: true }));
+        }
+      });
 
       const dial = $("dial");
       const onMove = (e) => {
@@ -298,6 +329,51 @@
       dial.addEventListener("pointerup", onUp);
       dial.addEventListener("pointercancel", onUp);
       this._built = true;
+    }
+
+    // ---------- Versatile Thermostat ----------
+    static isVTherm(a) {
+      return !!a && (a.is_window_configured !== undefined || a.is_presence_configured !== undefined ||
+        (a.specific_states && typeof a.specific_states === "object") || a.timed_preset_manager !== undefined);
+    }
+    _vtOn() { return !!(this._config.vtherm && this._so && HolmClimateCard.isVTherm(this._so.attributes)); }
+    _vtCall(service, data) {
+      if (this._hass) this._hass.callService("versatile_thermostat", service, { entity_id: this._config.entity, ...data });
+    }
+    // lecture tolérante : attributs regroupés par section (VTherm 7+) ou à plat (anciennes versions)
+    _vt() {
+      const a = this._so.attributes, sec = (n) => (a[n] && typeof a[n] === "object" ? a[n] : {});
+      const pick = (o, k) => (o[k] !== undefined ? o[k] : a[k]);
+      const isOn = (v) => v === true || v === "on" || v === "home";
+      const sp = sec("specific_states"), wm = sec("window_manager"), pm = sec("presence_manager"), mm = sec("motion_manager");
+      const pw = sec("power_manager"), sm = sec("safety_manager"), tp = sec("timed_preset_manager"), sw = sec("vtherm_over_switch");
+      const winCfg = !!(a.is_window_configured || a.is_window_auto_configured);
+      let bypass = isOn(pick(wm, "is_window_bypass")) || isOn(a.window_bypass_state);
+      if (this._vtOpt && Date.now() - this._vtOpt.ts < OPTIMISTIC_TTL && this._vtOpt.bypass !== bypass) bypass = this._vtOpt.bypass;
+      else this._vtOpt = null;
+      let onPct = pick(sw, "on_percent");
+      if (onPct == null) onPct = a.power_percent != null ? Number(a.power_percent) / 100 : null;
+      onPct = onPct == null || isNaN(Number(onPct)) ? null : Number(onPct) <= 1 ? Number(onPct) * 100 : Number(onPct);
+      const remaining = tp.remaining_time_min != null ? Number(tp.remaining_time_min)
+        : tp.end_time ? (new Date(tp.end_time).getTime() - Date.now()) / 60000 : null;
+      const ext = pick(sp, "ext_current_temperature");
+      return {
+        winCfg, winOpen: winCfg && (isOn(pick(wm, "window_state")) || isOn(pick(wm, "window_auto_state"))), bypass,
+        presCfg: !!a.is_presence_configured, present: isOn(pick(pm, "presence_state")),
+        motCfg: !!a.is_motion_configured, motion: isOn(pick(mm, "motion_state")),
+        powCfg: !!a.is_power_configured, overpower: isOn(pick(pw, "overpowering_state")) || a.preset_mode === "power",
+        safety: isOn(pick(sm, "safety_state")) || isOn(a.security_state) || ["safety", "security"].includes(a.preset_mode),
+        locked: a.is_locked === true,
+        timed: tp.is_active === true || tp.is_active === "on" ? { preset: tp.preset, remaining, original: tp.original_preset } : null,
+        offReason: pick(sp, "hvac_off_reason"), modeReason: pick(sp, "hvac_mode_reason"),
+        onPct, meanPower: pick(pw, "mean_cycle_power"), ext: ext == null || isNaN(Number(ext)) ? null : Number(ext),
+      };
+    }
+    _reasonTxt(r) {
+      if (!r) return null;
+      const k = String(r).trim().toLowerCase();
+      if (k === "manual" || k === "manuel" || k === "none") return null;
+      return VT_REASON[k] || String(r).toLowerCase();
     }
 
     // ---------- helpers ----------
@@ -395,7 +471,23 @@
       if (mode === "off") status = "Éteint";
       else if (action === "pending") status = meta.label + "…";
       else status = ACTION_LABEL[action] || meta.label;
+      const vt = this._vtOn() ? this._vt() : null;
+      if (vt) {
+        const pm = (k) => (PRESET_META[k] || { label: cap(k) }).label;
+        const why = this._reasonTxt(vt.offReason) || this._reasonTxt(vt.modeReason);
+        if (vt.safety) status = "Sécurité · sonde muette";
+        else if (vt.overpower) status = "Délestage en cours";
+        else if (vt.winOpen && !vt.bypass) status = mode === "off" || why === "fenêtre ouverte" ? "Arrêté · fenêtre ouverte" : "Fenêtre ouverte";
+        else if (mode === "off" && why) status = `Arrêté · ${why}`;
+        else if (vt.timed && vt.timed.preset) status = `${pm(vt.timed.preset)} · encore ${durTxt(vt.timed.remaining ?? 0)}`;
+        card.dataset.vt = vt.safety || vt.overpower ? "alert" : vt.winOpen && !vt.bypass ? "warn" : "";
+      } else card.dataset.vt = "";
       $("status").textContent = status;
+      this._renderBadges(vt);
+      this._renderPower(vt);
+      // décompte du preset temporisé entre deux mises à jour
+      if (vt && vt.timed) { if (!this._tick) this._tick = setInterval(() => this._so && this._render(), 30000); }
+      else if (this._tick) { clearInterval(this._tick); this._tick = null; }
 
       const t = this._drag ? this._drag.t : this._target();
       this._paintDial(t);
@@ -412,6 +504,53 @@
       this._renderModes(mode, a.hvac_modes || []);
       this._renderChips(a);
       if (this._sheet) this._renderSheet();
+    }
+
+    disconnectedCallback() { if (this._tick) { clearInterval(this._tick); this._tick = null; } }
+
+    _renderBadges(vt) {
+      const box = this.$("vb");
+      const out = [];
+      const pill = (cls, icon, label, title, extra = "") =>
+        `<span class="pill ${cls}" title="${title || label || ""}"><ha-icon icon="${icon}"></ha-icon>${label ? `<span>${label}</span>` : ""}${extra}</span>`;
+      if (vt) {
+        if (vt.safety) out.push(pill("bad", "mdi:shield-alert", "Sécurité", "Sonde de température muette : chauffe de sécurité"));
+        if (vt.overpower) out.push(pill("bad", "mdi:flash-alert", "Délestage", "Puissance maximale atteinte : chauffage délesté"));
+        if (vt.winCfg) {
+          if (vt.bypass) out.push(pill("info", "mdi:window-open-variant", "Fenêtre ignorée", "La détection d'ouverture est ignorée", `<button data-act="bypass-off">Rétablir</button>`));
+          else if (vt.winOpen) out.push(pill("warn", "mdi:window-open-variant", "Fenêtre ouverte", "Ouverture détectée : chauffage réduit ou coupé", `<button data-act="bypass-on">Ignorer</button>`));
+          else out.push(pill("dim", "mdi:window-closed-variant", "", "Fenêtres fermées"));
+        }
+        if (vt.presCfg) out.push(vt.present ? pill("ok", "mdi:home-account", "", "Présence détectée") : pill("warn", "mdi:home-export-outline", "Absent", "Personne à la maison : consigne d'absence"));
+        if (vt.motCfg) out.push(vt.motion ? pill("ok", "mdi:motion-sensor", "Mouvement", "Mouvement détecté dans la pièce") : pill("dim", "mdi:motion-sensor-off", "", "Pas de mouvement"));
+        if (vt.locked) out.push(pill("info", "mdi:lock", "Verrouillé", "Thermostat verrouillé"));
+      }
+      for (const id of (this._config.badges || []).slice(0, 4)) {
+        const st = this._hass && this._hass.states[id];
+        if (!st) continue;
+        const a = st.attributes, dom = id.split(".")[0];
+        const on = ["on", "open", "home", "detected", "true"].includes(st.state);
+        const icon = a.icon || (dom === "binary_sensor" ? ({ window: "mdi:window-open-variant", door: "mdi:door-open", opening: "mdi:window-open-variant", motion: "mdi:motion-sensor",
+          occupancy: "mdi:home-account", presence: "mdi:home-account", battery: "mdi:battery-alert", problem: "mdi:alert-circle" }[a.device_class] || "mdi:checkbox-blank-circle-outline")
+          : dom === "sensor" ? ({ humidity: "mdi:water-percent", temperature: "mdi:thermometer", power: "mdi:flash", co2: "mdi:molecule-co2", battery: "mdi:battery" }[a.device_class] || "mdi:eye")
+          : dom === "person" || dom === "device_tracker" ? "mdi:account" : "mdi:information-outline");
+        const name = a.friendly_name || id;
+        const numeric = st.state !== "" && !isNaN(Number(st.state));
+        const label = numeric ? `${String(Number(st.state)).replace(".", ",")}${a.unit_of_measurement ? " " + a.unit_of_measurement : ""}` : on ? name : "";
+        out.push(`<button class="pill ${numeric ? "info" : on ? "warn" : "dim"}" data-ent="${id}" title="${name}"><ha-icon icon="${icon}"></ha-icon>${label ? `<span>${label}</span>` : ""}</button>`);
+      }
+      const html = out.join("");
+      if (box._html !== html) { box._html = html; box.innerHTML = html; }
+      box.style.display = out.length ? "" : "none";
+    }
+    _renderPower(vt) {
+      const box = this.$("vp");
+      if (!vt || (vt.onPct == null && vt.ext == null)) { box.style.display = "none"; return; }
+      box.style.display = "";
+      const pct = vt.onPct == null ? null : clamp(vt.onPct, 0, 100);
+      const w = vt.meanPower != null && !isNaN(Number(vt.meanPower)) ? ` · ${Math.round(Number(vt.meanPower))} W` : "";
+      box.innerHTML = `${pct != null ? `<div class="vpt"><span><ha-icon icon="mdi:radiator"></ha-icon>Chauffe ${Math.round(pct)} %${w}</span>${vt.ext != null ? `<span><ha-icon icon="mdi:home-export-outline"></ha-icon>Ext. ${fmt(vt.ext, 0.1)}°</span>` : ""}</div>
+        <div class="vpb"><i style="width:${pct}%"></i></div>` : `<div class="vpt"><span><ha-icon icon="mdi:home-export-outline"></ha-icon>Extérieur ${fmt(vt.ext, 0.1)}°</span></div>`}`;
     }
 
     _curTemp() {
@@ -505,6 +644,11 @@
         const m = PRESET_META[v] || { icon: "mdi:star-outline", label: cap(v) };
         defs.push({ key: "preset", title: "Préréglage", icon: m.icon, label: m.label, hot: v !== "none", value: v, options: a.preset_modes, meta: PRESET_META, attr: "preset_mode", service: "set_preset_mode" });
       }
+      if (this._vtOn() && a.preset_modes && a.preset_modes.length) {
+        const vt = this._vt();
+        const t = vt.timed;
+        defs.push({ key: "timed", title: "Préréglage temporaire", icon: "mdi:timer-outline", label: t ? durTxt(t.remaining ?? 0) : "Minuteur", hot: !!t, value: t ? Math.round(t.remaining ?? 0) : "", options: [], custom: "timed" });
+      }
       if (cfg.show_swing && a.swing_modes && a.swing_modes.length) {
         const v = this._val("swing_mode");
         const m = SWING_META[v] || { label: cap(v) };
@@ -524,7 +668,7 @@
       this._defs = defs;
       box.style.display = defs.length ? "" : "none";
       box.dataset.n = defs.length;
-      const key = defs.map((d) => d.key + ":" + d.value + ":" + d.icon).join("|");
+      const key = defs.map((d) => d.key + ":" + d.value + ":" + d.icon + ":" + d.label).join("|");
       if (box._key === key) return;
       box._key = key;
       box.innerHTML = "";
@@ -544,6 +688,7 @@
       if (!d) return this._closeSheet();
       $("sheet-t").textContent = d.title;
       const box = $("opts");
+      if (d.custom === "timed") return this._renderTimedSheet(box);
       box.innerHTML = "";
       box.dataset.n = d.options.length;
       d.options.forEach((o) => {
@@ -559,6 +704,29 @@
         });
         box.appendChild(b);
       });
+      this._card.classList.add("sheet-open");
+    }
+    _renderTimedSheet(box) {
+      const a = this._so.attributes, vt = this._vt();
+      const presets = (a.preset_modes || []).filter((p) => !["none", "power", "safety", "security"].includes(p));
+      if (!presets.includes(this._tpPreset)) this._tpPreset = presets.includes("boost") ? "boost" : presets.includes("comfort") ? "comfort" : presets[0];
+      const lab = (p) => (PRESET_META[p] || { label: cap(p) }).label, ic = (p) => (PRESET_META[p] || { icon: "mdi:star-outline" }).icon;
+      box.dataset.n = "timed";
+      box.innerHTML = `
+        ${vt.timed ? `<div class="tpa"><ha-icon icon="mdi:timer-sand"></ha-icon><span><b>${lab(vt.timed.preset)}</b> encore ${durTxt(vt.timed.remaining ?? 0)}${vt.timed.original ? ` · puis ${lab(vt.timed.original)}` : ""}</span><button class="tpc" data-cancel>Annuler</button></div>` : ""}
+        <div class="tpl">Préréglage</div>
+        <div class="tpr">${presets.map((p) => `<button class="opt${p === this._tpPreset ? " on" : ""}" data-p="${p}"><ha-icon icon="${ic(p)}"></ha-icon><span>${lab(p)}</span></button>`).join("")}</div>
+        <div class="tpl">Pendant</div>
+        <div class="tpr">${VT_DURATIONS.map(([m, l]) => `<button class="opt dur" data-m="${m}"><ha-icon icon="mdi:timer-outline"></ha-icon><span>${l}</span></button>`).join("")}</div>`;
+      box.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => { this._tpPreset = b.dataset.p; this._renderTimedSheet(box); }));
+      box.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
+        this._vtCall("set_timed_preset", { preset: this._tpPreset, duration_minutes: Number(b.dataset.m) });
+        this._set("preset_mode", this._tpPreset);
+        this._closeSheet();
+        this._render();
+      }));
+      const c = box.querySelector("[data-cancel]");
+      if (c) c.addEventListener("click", () => { this._vtCall("cancel_timed_preset", {}); this._closeSheet(); this._render(); });
       this._card.classList.add("sheet-open");
     }
     _openGraph() {
@@ -825,6 +993,43 @@
       .opt.on { background: rgba(var(--m), .25); box-shadow: inset 0 0 0 1px rgba(var(--m), .55); }
       .opt.on ha-icon { color: rgb(var(--m)); }
 
+      /* ---------- Versatile Thermostat et pastilles ---------- */
+      .vb { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
+      .pill { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 12px; font-size: 11.5px; font-weight: 600; white-space: nowrap; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.07); color: var(--tx); max-width: 100%; box-sizing: border-box; }
+      .pill > span { overflow: hidden; text-overflow: ellipsis; }
+      .pill ha-icon { --mdc-icon-size: 14px; flex: 0 0 auto; }
+      .pill.dim { padding: 0 6px; color: var(--tx2); }
+      .pill.ok ha-icon { color: rgb(62,201,122); }
+      .pill.info { background: rgba(90,170,255,.12); box-shadow: inset 0 0 0 1px rgba(90,170,255,.3); }
+      .pill.info ha-icon { color: rgb(120,190,255); }
+      .pill.warn { background: rgba(245,166,35,.15); box-shadow: inset 0 0 0 1px rgba(245,166,35,.4); }
+      .pill.warn ha-icon { color: rgb(245,180,70); }
+      .pill.bad { background: rgba(239,83,80,.18); box-shadow: inset 0 0 0 1px rgba(239,83,80,.5); animation: pbad 2.4s ease-in-out infinite; }
+      .pill.bad ha-icon { color: rgb(255,120,115); }
+      @keyframes pbad { 50% { box-shadow: inset 0 0 0 1px rgba(239,83,80,.85), 0 0 10px -2px rgba(239,83,80,.6); } }
+      .pill button { margin-left: 3px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 10.5px; font-weight: 700; background: rgba(255,255,255,.14); }
+      .pill button:hover { background: rgba(255,255,255,.24); }
+      button.pill:hover { background: rgba(255,255,255,.1); }
+      .vp { display: flex; flex-direction: column; gap: 5px; padding: 2px 2px 0; }
+      .vpt { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--tx2); font-variant-numeric: tabular-nums; }
+      .vpt span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; }
+      .vpt ha-icon { --mdc-icon-size: 14px; }
+      .vpb { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+      .vpb i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, rgba(255,140,60,.7), rgb(255,110,30)); transition: width .6s; }
+      .tpa, .tpl, .tpr { grid-column: 1 / -1; }
+      .tpa { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; font-size: 12.5px; background: rgba(var(--m), .16); box-shadow: inset 0 0 0 1px rgba(var(--m), .35); }
+      .tpa > span { flex: 1 1 auto; min-width: 0; }
+      .tpa ha-icon { --mdc-icon-size: 18px; color: rgb(var(--m)); }
+      .tpc { height: 26px; padding: 0 10px; border-radius: 13px; font-size: 11.5px; font-weight: 700; background: rgba(255,255,255,.12); }
+      .tpl { margin: 4px 2px 0; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--tx2); }
+      .tpr { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 5px; }
+      ha-card[data-vt="alert"] { border-color: rgba(239,83,80,.55); }
+      ha-card[data-vt="warn"] { border-color: rgba(245,166,35,.45); }
+      ha-card[data-vt="alert"] .status { color: rgb(255,140,135); }
+      ha-card[data-vt="warn"] .status { color: rgb(245,190,90); }
+      ha-card[data-layout="compact"] .vb { grid-column: 1 / -1; margin: 0; }
+      ha-card[data-layout="compact"] .vp { display: none; }
+
       .na { display: none; position: absolute; inset: 0; place-items: center; background: rgba(8,12,18,.8); color: var(--tx2); font-size: 13px; }
       ha-card.unavail .na { display: grid; }
 
@@ -906,7 +1111,9 @@
               { name: "show_swing", selector: { boolean: {} } },
             ],
           },
+          { name: "badges", selector: { entity: { multiple: true } } },
         ];
+        this._base = f.schema;
         const L = {
           entity: "Entité climate",
           name: "Nom affiché",
@@ -919,6 +1126,8 @@
           max_temp: "Consigne maximum",
           temperature_sensor: "Sonde de température (sinon celle de l'appareil)",
           graph_hours: "Durée du graphique par défaut",
+          badges: "Pastilles d'état (jusqu'à 4 entités : fenêtre, présence, humidité…)",
+          vtherm: "Fonctions Versatile Thermostat (fenêtre, présence, délestage, minuteur…)",
         };
         f.computeLabel = (s) => L[s.name] || s.name;
         f.addEventListener("value-changed", (ev) => {
@@ -927,6 +1136,8 @@
           for (const k of ["min_temp", "max_temp", "temperature_sensor", "name", "icon"]) if (v[k] === "" || v[k] == null) delete v[k];
           if (v.layout === "full") delete v.layout;
           if (Number(v.graph_hours) === 24) delete v.graph_hours;
+          if (!v.vtherm) delete v.vtherm;
+          if (!Array.isArray(v.badges) || !v.badges.length) delete v.badges;
           this._config = v;
           this._self = true;
           this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
@@ -934,6 +1145,12 @@
         });
         this._form = f;
         this.appendChild(f);
+      }
+      const so = this._config.entity && this._hass.states[this._config.entity];
+      const isVt = !!(so && HolmClimateCard.isVTherm(so.attributes)) || !!this._config.vtherm;
+      if (this._isVt !== isVt) {
+        this._isVt = isVt;
+        this._form.schema = isVt ? [...this._base, { name: "vtherm", selector: { boolean: {} } }] : this._base;
       }
       this._form.hass = this._hass;
       this._form.data = { show_fan: true, show_preset: true, show_swing: true, layout: "full", graph_hours: 24, ...this._config };

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+- **Option Versatile Thermostat** (`vtherm: true`, proposée dans l'éditeur pour les entités VTherm) ([#4](https://github.com/kaaribou/climate-card-holm/issues/4)) :
+  - pastilles fenêtre (avec **Ignorer** / **Rétablir**), présence, mouvement, délestage, sécurité et verrou ;
+  - raison de l'arrêt sous le nom, bordure orange ou rouge en cas d'alerte ;
+  - puce **Minuteur** : préréglage temporaire (30 min à 4 h) avec décompte et **Annuler** ;
+  - taux de chauffe, puissance moyenne et température extérieure ;
+  - préréglages Hors-gel, Délestage et Sécurité traduits.
+- **Pastilles d'état** (`badges`) pour tout thermostat : jusqu'à 4 entités (fenêtre, présence, humidité…) sous le nom.
+- Sans ces options, la carte est inchangée.
+
 ## 1.1.0
 - **Vue compacte** (`layout: compact`) : sans la roue, moins haute et en largeur — modes Éteint / Chauffe / Clim et consigne − / + sur une ligne, options à côté ; en pleine largeur tout tient sur une seule ligne ([#1](https://github.com/kaaribou/climate-card-holm/issues/1)).
 - **Ambiance « éteint »** : brume grise qui respire doucement et fines poussières, pour que la carte reste vivante même à l'arrêt.

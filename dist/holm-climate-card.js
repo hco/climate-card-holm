@@ -14,10 +14,12 @@
  * - Option Versatile Thermostat (vtherm: true) : pastilles fenêtre / présence /
  *   mouvement / délestage / sécurité / verrou, raison de l'arrêt, preset
  *   temporisé avec décompte, puissance de chauffe et température extérieure
+ *   + inhibition (avec bypass), arrêt automatique (auto-start/stop), défaut de chauffe,
+ *   pastilles actives au toucher (bypass fenêtre, inhibition, auto-start/stop)
  * - Pastilles d'état configurables (badges) pour n'importe quel thermostat
  */
 (() => {
-  const VERSION = "1.2.0";
+  const VERSION = "1.3.0";
   const MODE_META = {
     off: { icon: "mdi:power", rgb: "150,160,178", label: "Éteint" },
     heat: { icon: "mdi:fire", rgb: "255,128,48", label: "Chauffe" },
@@ -80,10 +82,13 @@
   };
   // Versatile Thermostat : raisons d'arrêt / de mode (valeurs anglaises et françaises selon les versions)
   const VT_REASON = {
-    window: "fenêtre ouverte", fenetre: "fenêtre ouverte", "fenêtre": "fenêtre ouverte",
-    "auto-start/stop": "arrêt automatique", auto_start_stop: "arrêt automatique",
-    sleep: "veille", sommeil: "veille", safety: "sécurité", central_mode: "mode central", "central mode": "mode central",
+    window: "fenêtre ouverte", fenetre: "fenêtre ouverte", "fenêtre": "fenêtre ouverte", window_detection: "fenêtre ouverte",
+    "auto-start/stop": "auto-start/stop", auto_start_stop: "auto-start/stop",
+    sleep: "veille", sommeil: "veille", sleep_mode: "veille", safety: "sécurité", safety_detection: "sécurité",
+    central_mode: "mode central", "central mode": "mode central", inhibition: "inhibé",
+    fan_only_auto_start_stop: "ventilation (auto-start/stop)", dry_auto_start_stop: "déshumidification (auto-start/stop)",
   };
+  const VT_ASS_REASONS = ["hvac_off_auto_start_stop", "hvac_fan_only_auto_start_stop", "hvac_dry_auto_start_stop"];
   const VT_DURATIONS = [[30, "30 min"], [60, "1 h"], [120, "2 h"], [240, "4 h"]];
   const durTxt = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? " " + String(m % 60).padStart(2, "0") : ""}` : `${Math.max(0, Math.round(m))} min`);
   const SWING_META = {
@@ -286,6 +291,12 @@
           this._vtOpt = { bypass: on, ts: Date.now() };
           this._vtCall("set_window_bypass", { window_bypass: on });
           this._render();
+        } else if (b.dataset.act === "inh-on" || b.dataset.act === "inh-off") {
+          const sw = this._inhSwitch();
+          if (sw) this._hass.callService("switch", b.dataset.act === "inh-on" ? "turn_on" : "turn_off", { entity_id: sw });
+        } else if (b.dataset.act === "ass-on" || b.dataset.act === "ass-off") {
+          const sw = this._assSwitch(), on = b.dataset.act === "ass-on";
+          if (sw) { this._assOpt = { on, ts: Date.now() }; this._hass.callService("switch", on ? "turn_on" : "turn_off", { entity_id: sw }); this._render(); }
         } else if (b.dataset.ent) {
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: b.dataset.ent }, bubbles: true, composed: true }));
         }
@@ -366,14 +377,28 @@
         locked: a.is_locked === true,
         timed: tp.is_active === true || tp.is_active === "on" ? { preset: tp.preset, remaining, original: tp.original_preset } : null,
         offReason: pick(sp, "hvac_off_reason"), modeReason: pick(sp, "hvac_mode_reason"),
+        inhibited: !!(sp.inhibition && sp.inhibition.inhibited === true), inhBypass: this._inhSwitch() ? this._hass.states[this._inhSwitch()]?.state === "on" : false,
+        assCfg: a.is_auto_start_stop_configured === true, assOn: pick(sec("auto_start_stop_manager"), "auto_start_stop_enable") === true,
+        assStopped: VT_ASS_REASONS.includes(String(pick(sp, "hvac_off_reason") || "")) || VT_ASS_REASONS.includes(String(pick(sp, "hvac_mode_reason") || "")),
+        heatFail: isOn(sec("heating_failure_detection_manager").heating_failure_state), coolFail: isOn(sec("heating_failure_detection_manager").cooling_failure_state),
         onPct, meanPower: pick(pw, "mean_cycle_power"), ext: ext == null || isNaN(Number(ext)) ? null : Number(ext),
       };
     }
+    // interrupteur « Enable auto start/stop » du même appareil (ou celui de la configuration)
+    _assSwitch() {
+      if (this._config.vtherm_auto_start_stop) return this._config.vtherm_auto_start_stop;
+      const h = this._hass, reg = h && h.entities, me = reg && reg[this._config.entity];
+      if (!me || !me.device_id) return null;
+      const r = Object.values(reg).find((e) => e.device_id === me.device_id && e.entity_id.startsWith("switch.") && /auto_start_stop/.test(e.entity_id));
+      return r ? r.entity_id : null;
+    }
+    // interrupteur de bypass de l'inhibition (fourni par le plugin d'inhibition, à choisir dans l'éditeur)
+    _inhSwitch() { return this._config.vtherm_inhibition_bypass || null; }
     _reasonTxt(r) {
       if (!r) return null;
-      const k = String(r).trim().toLowerCase();
-      if (k === "manual" || k === "manuel" || k === "none") return null;
-      return VT_REASON[k] || String(r).toLowerCase();
+      const k = String(r).trim().toLowerCase().replace(/^hvac_(off_)?/, "");
+      if (k === "manual" || k === "manuel" || k === "none" || k === "") return null;
+      return VT_REASON[k] || k.replace(/_/g, " ");
     }
 
     // ---------- helpers ----------
@@ -462,7 +487,8 @@
       $("g1").setAttribute("stop-color", g[1]);
 
       $("name").textContent = this._config.name || a.friendly_name || this._config.entity;
-      const bicon = mode === "off" ? (this._config.icon || "mdi:air-conditioner") : meta.icon;
+      const hm = a.hvac_modes || [];
+      const bicon = mode === "off" ? (this._config.icon || (hm.includes("heat") && !hm.includes("cool") ? "mdi:radiator-off" : "mdi:power")) : meta.icon;
       $("bicon").setAttribute("icon", bicon);
       const fm = FAN_META[this._val("fan_mode")];
       card.style.setProperty("--spin", `${fm && fm.speed ? fm.speed : 1.6}s`);
@@ -476,11 +502,13 @@
         const pm = (k) => (PRESET_META[k] || { label: cap(k) }).label;
         const why = this._reasonTxt(vt.offReason) || this._reasonTxt(vt.modeReason);
         if (vt.safety) status = "Sécurité · sonde muette";
+        else if (vt.heatFail || vt.coolFail) status = vt.heatFail ? "Défaut de chauffe" : "Défaut de refroidissement";
+        else if (vt.inhibited && !vt.inhBypass) status = "Arrêté · inhibé";
         else if (vt.overpower) status = "Délestage en cours";
         else if (vt.winOpen && !vt.bypass) status = mode === "off" || why === "fenêtre ouverte" ? "Arrêté · fenêtre ouverte" : "Fenêtre ouverte";
         else if (mode === "off" && why) status = `Arrêté · ${why}`;
         else if (vt.timed && vt.timed.preset) status = `${pm(vt.timed.preset)} · encore ${durTxt(vt.timed.remaining ?? 0)}`;
-        card.dataset.vt = vt.safety || vt.overpower ? "alert" : vt.winOpen && !vt.bypass ? "warn" : "";
+        card.dataset.vt = vt.safety || vt.overpower || vt.heatFail || vt.coolFail ? "alert" : (vt.winOpen && !vt.bypass) || (vt.inhibited && !vt.inhBypass) ? "warn" : "";
       } else card.dataset.vt = "";
       $("status").textContent = status;
       this._renderBadges(vt);
@@ -516,10 +544,26 @@
       if (vt) {
         if (vt.safety) out.push(pill("bad", "mdi:shield-alert", "Sécurité", "Sonde de température muette : chauffe de sécurité"));
         if (vt.overpower) out.push(pill("bad", "mdi:flash-alert", "Délestage", "Puissance maximale atteinte : chauffage délesté"));
+        if (vt.heatFail) out.push(pill("bad", "mdi:radiator-disabled", "Défaut", "Défaut de chauffage détecté : la température ne monte pas"));
+        if (vt.coolFail) out.push(pill("bad", "mdi:snowflake-alert", "Défaut", "Défaut de refroidissement détecté"));
+        // pastilles actives : un toucher sur l'icône agit sur Versatile Thermostat
+        const act = (cls, icon, label, title, a) => `<button class="pill ${cls}" data-act="${a}" title="${title}"><ha-icon icon="${icon}"></ha-icon>${label ? `<span>${label}</span>` : ""}</button>`;
+        const inhSw = this._inhSwitch();
+        if (vt.inhibited || vt.inhBypass) {
+          if (vt.inhBypass) out.push(inhSw ? act("info", "mdi:debug-step-over", "Inhibition ignorée", "Bypass de l'inhibition actif — toucher pour le désactiver", "inh-off") : pill("info", "mdi:debug-step-over", "Inhibition ignorée", "Bypass de l'inhibition actif"));
+          else out.push(inhSw ? act("warn", "mdi:pause-circle-outline", "Inhibé", "Commande des appareils suspendue — toucher pour ignorer l'inhibition", "inh-on") : pill("warn", "mdi:pause-circle-outline", "Inhibé", "Commande des appareils suspendue"));
+        }
         if (vt.winCfg) {
-          if (vt.bypass) out.push(pill("info", "mdi:window-open-variant", "Fenêtre ignorée", "La détection d'ouverture est ignorée", `<button data-act="bypass-off">Rétablir</button>`));
-          else if (vt.winOpen) out.push(pill("warn", "mdi:window-open-variant", "Fenêtre ouverte", "Ouverture détectée : chauffage réduit ou coupé", `<button data-act="bypass-on">Ignorer</button>`));
-          else out.push(pill("dim", "mdi:window-closed-variant", "", "Fenêtres fermées"));
+          if (vt.bypass) out.push(act("info", "mdi:window-open-variant", "Fenêtre ignorée", "La détection d'ouverture est ignorée — toucher pour la rétablir", "bypass-off"));
+          else if (vt.winOpen) out.push(act("warn", "mdi:window-open-variant", "Fenêtre ouverte", "Ouverture détectée : chauffage réduit ou coupé — toucher pour l'ignorer", "bypass-on"));
+          else out.push(act("dim", "mdi:window-closed-variant", "", "Fenêtres fermées — toucher pour ignorer la détection d'ouverture", "bypass-on"));
+        }
+        if (vt.assCfg) {
+          const sw = this._assSwitch(), on = this._assOpt && Date.now() - this._assOpt.ts < OPTIMISTIC_TTL ? this._assOpt.on : vt.assOn;
+          const cls = vt.assStopped ? "warn" : on ? "info" : "dim", label = vt.assStopped ? "Arrêt auto" : "";
+          const title = vt.assStopped ? "Arrêté par l'auto-start/stop" : on ? "Auto-start/stop actif" : "Auto-start/stop désactivé";
+          out.push(sw ? act(cls, on ? "mdi:power-cycle" : "mdi:sync-off", label, `${title} — toucher pour ${on ? "le désactiver" : "l'activer"}`, on ? "ass-off" : "ass-on")
+            : pill(cls, on ? "mdi:power-cycle" : "mdi:sync-off", label, title));
         }
         if (vt.presCfg) out.push(vt.present ? pill("ok", "mdi:home-account", "", "Présence détectée") : pill("warn", "mdi:home-export-outline", "Absent", "Personne à la maison : consigne d'absence"));
         if (vt.motCfg) out.push(vt.motion ? pill("ok", "mdi:motion-sensor", "Mouvement", "Mouvement détecté dans la pièce") : pill("dim", "mdi:motion-sensor-off", "", "Pas de mouvement"));
@@ -545,12 +589,20 @@
     }
     _renderPower(vt) {
       const box = this.$("vp");
-      if (!vt || (vt.onPct == null && vt.ext == null)) { box.style.display = "none"; return; }
+      // informations affichées sous les commandes (option vtherm_info : heat, power, ext, bar)
+      const show = Array.isArray(this._config.vtherm_info) ? this._config.vtherm_info : ["heat", "power", "ext", "bar"];
+      const running = this._so && this._so.state !== "off";   // éteint : pas de chauffe à afficher
+      const pct = vt && running && vt.onPct != null && show.includes("heat") ? clamp(vt.onPct, 0, 100) : null;
+      const w = vt && running && show.includes("power") && vt.meanPower != null && !isNaN(Number(vt.meanPower)) ? Math.round(Number(vt.meanPower)) : null;
+      const ext = vt && show.includes("ext") ? vt.ext : null;
+      const bar = vt && vt.onPct != null && show.includes("bar") && this._so.state !== "off";
+      if (!vt || (pct == null && w == null && ext == null && !bar)) { box.style.display = "none"; return; }
       box.style.display = "";
-      const pct = vt.onPct == null ? null : clamp(vt.onPct, 0, 100);
-      const w = vt.meanPower != null && !isNaN(Number(vt.meanPower)) ? ` · ${Math.round(Number(vt.meanPower))} W` : "";
-      box.innerHTML = `${pct != null ? `<div class="vpt"><span><ha-icon icon="mdi:radiator"></ha-icon>Chauffe ${Math.round(pct)} %${w}</span>${vt.ext != null ? `<span><ha-icon icon="mdi:home-export-outline"></ha-icon>Ext. ${fmt(vt.ext, 0.1)}°</span>` : ""}</div>
-        <div class="vpb"><i style="width:${pct}%"></i></div>` : `<div class="vpt"><span><ha-icon icon="mdi:home-export-outline"></ha-icon>Extérieur ${fmt(vt.ext, 0.1)}°</span></div>`}`;
+      const heatTxt = pct != null ? `Chauffe ${Math.round(pct)} %${w != null ? ` · ${w} W` : ""}` : w != null ? `${w} W` : "";
+      const parts = [];
+      if (heatTxt) parts.push(`<span><ha-icon icon="mdi:radiator"></ha-icon>${heatTxt}</span>`);
+      if (ext != null) parts.push(`<span><ha-icon icon="mdi:home-export-outline"></ha-icon>Ext. ${fmt(ext, 0.1)}°</span>`);
+      box.innerHTML = `${parts.length ? `<div class="vpt">${parts.join("")}</div>` : ""}${bar ? `<div class="vpb"><i style="width:${clamp(vt.onPct, 0, 100)}%"></i></div>` : ""}`;
     }
 
     _curTemp() {
@@ -1009,10 +1061,11 @@
       @keyframes pbad { 50% { box-shadow: inset 0 0 0 1px rgba(239,83,80,.85), 0 0 10px -2px rgba(239,83,80,.6); } }
       .pill button { margin-left: 3px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 10.5px; font-weight: 700; background: rgba(255,255,255,.14); }
       .pill button:hover { background: rgba(255,255,255,.24); }
+      button.pill { cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; border: 0; }
       button.pill:hover { background: rgba(255,255,255,.1); }
       .vp { display: flex; flex-direction: column; gap: 5px; padding: 2px 2px 0; }
-      .vpt { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--tx2); font-variant-numeric: tabular-nums; }
-      .vpt span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; }
+      .vpt { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; font-size: 11.5px; color: var(--tx2); font-variant-numeric: tabular-nums; }
+      .vpt span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
       .vpt ha-icon { --mdc-icon-size: 14px; }
       .vpb { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
       .vpb i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, rgba(255,140,60,.7), rgb(255,110,30)); transition: width .6s; }
@@ -1058,6 +1111,11 @@
       @container (min-width: 600px) { .modes[data-n="4"] .mode span { display: inline; } }
       /* ---------- large : roue à gauche, commandes à droite ---------- */
       @container (min-width: 420px) {
+        /* pastilles à droite du titre : on gagne une ligne */
+        ha-card:not([data-layout="compact"]) .wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; }
+        ha-card:not([data-layout="compact"]) .head { grid-column: 1; grid-row: 1; }
+        ha-card:not([data-layout="compact"]) .vb { grid-column: 2; grid-row: 1; margin: 0; justify-content: flex-end; max-width: 62cqi; }
+        ha-card:not([data-layout="compact"]) .main { grid-column: 1 / -1; }
         .main { flex-direction: row; align-items: center; gap: 16px; }
         .dialbox { flex: 0 0 200px; margin: 0; }
         .side { flex: 1; min-width: 0; gap: 10px; }
@@ -1128,6 +1186,9 @@
           graph_hours: "Durée du graphique par défaut",
           badges: "Pastilles d'état (jusqu'à 4 entités : fenêtre, présence, humidité…)",
           vtherm: "Fonctions Versatile Thermostat (fenêtre, présence, délestage, minuteur…)",
+          vtherm_info: "Informations sous les commandes",
+          vtherm_inhibition_bypass: "Interrupteur de bypass de l'inhibition (plugin d'inhibition)",
+          vtherm_auto_start_stop: "Interrupteur auto-start/stop (automatique si vide)",
         };
         f.computeLabel = (s) => L[s.name] || s.name;
         f.addEventListener("value-changed", (ev) => {
@@ -1136,7 +1197,9 @@
           for (const k of ["min_temp", "max_temp", "temperature_sensor", "name", "icon"]) if (v[k] === "" || v[k] == null) delete v[k];
           if (v.layout === "full") delete v.layout;
           if (Number(v.graph_hours) === 24) delete v.graph_hours;
-          if (!v.vtherm) delete v.vtherm;
+          if (!v.vtherm) { delete v.vtherm; delete v.vtherm_info; delete v.vtherm_inhibition_bypass; delete v.vtherm_auto_start_stop; }
+          if (Array.isArray(v.vtherm_info) && ["heat", "power", "ext", "bar"].every((k) => v.vtherm_info.includes(k)) && v.vtherm_info.length === 4) delete v.vtherm_info;
+          for (const k of ["vtherm_inhibition_bypass", "vtherm_auto_start_stop"]) if (!v[k]) delete v[k];
           if (!Array.isArray(v.badges) || !v.badges.length) delete v.badges;
           this._config = v;
           this._self = true;
@@ -1148,12 +1211,21 @@
       }
       const so = this._config.entity && this._hass.states[this._config.entity];
       const isVt = !!(so && HolmClimateCard.isVTherm(so.attributes)) || !!this._config.vtherm;
-      if (this._isVt !== isVt) {
-        this._isVt = isVt;
-        this._form.schema = isVt ? [...this._base, { name: "vtherm", selector: { boolean: {} } }] : this._base;
+      const vtOn = isVt && !!this._config.vtherm;
+      const key = `${isVt}|${vtOn}`;
+      if (this._isVt !== key) {
+        this._isVt = key;
+        const vtExtra = [
+          { name: "vtherm_info", selector: { select: { multiple: true, mode: "list", options: [
+            { value: "heat", label: "Taux de chauffe (%)" }, { value: "power", label: "Puissance moyenne (W)" },
+            { value: "ext", label: "Température extérieure" }, { value: "bar", label: "Barre de chauffe" }] } } },
+          { name: "vtherm_inhibition_bypass", selector: { entity: { domain: "switch" } } },
+          { name: "vtherm_auto_start_stop", selector: { entity: { domain: "switch" } } },
+        ];
+        this._form.schema = isVt ? [...this._base, { name: "vtherm", selector: { boolean: {} } }, ...(vtOn ? vtExtra : [])] : this._base;
       }
       this._form.hass = this._hass;
-      this._form.data = { show_fan: true, show_preset: true, show_swing: true, layout: "full", graph_hours: 24, ...this._config };
+      this._form.data = { show_fan: true, show_preset: true, show_swing: true, layout: "full", graph_hours: 24, vtherm_info: ["heat", "power", "ext", "bar"], ...this._config };
     }
   }
 

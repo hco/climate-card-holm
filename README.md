@@ -23,7 +23,7 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 - 🌡️ **Sonde au choix** et **graphique** : la température peut venir d'un autre capteur ; un toucher dessus ouvre l'historique (24 h par défaut, 6 h / 48 h / 7 j) avec la consigne et les périodes de chauffe / clim.
 - 🔒 **Consignes mini / maxi** : bornez la roue et les boutons (ex. 18 à 23 °C).
 - 🏷️ **Pastilles d'état** (`badges`) : jusqu'à 4 entités affichées sous le nom (fenêtre, présence, humidité…), pour n'importe quel thermostat.
-- 🧠 **Option Versatile Thermostat** (`vtherm: true`) : fenêtre ouverte (avec « Ignorer »), présence, mouvement, délestage, sécurité, verrou, raison de l'arrêt, **minuteur de préréglage** avec décompte, taux de chauffe et température extérieure. Désactivée par défaut : la carte reste simple.
+- 🧠 **Option Versatile Thermostat** (`vtherm: true`) : fenêtre ouverte (bypass au toucher), présence, mouvement, délestage, sécurité, défaut de chauffe, **inhibition**, **auto-start/stop**, verrou, raison de l'arrêt, **minuteur de préréglage** avec décompte, taux de chauffe et température extérieure (au choix). Désactivée par défaut : la carte reste simple.
 - 👆 Un toucher sur le nom ouvre la fiche de l'appareil dans Home Assistant ; un toucher sur la température ouvre son historique.
 
 | Deux côte à côte (chauffage / clim) | Pleine largeur |
@@ -42,7 +42,13 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 |---|---|
 | ![Volet de choix](docs/images/choix.png) | ![Historique](docs/images/graphique.png) |
 
-### 🆕 Nouveautés de la 1.2.0
+### 🆕 Nouveautés de la 1.3.0
+
+**Versatile Thermostat** : arrêt manuel, inhibition, auto-start/stop (pastilles actives au toucher) et, en pleine largeur, pastilles à droite du nom
+
+![Versatile Thermostat 1.3](docs/images/vtherm-1.3.png)
+
+### Nouveautés de la 1.2.0
 
 **Option Versatile Thermostat** : état normal, fenêtre ouverte, minuteur de préréglage
 
@@ -100,6 +106,9 @@ Dans un tableau de bord en sections, la carte prend par défaut une demi-largeur
 | `graph_hours` | Durée du graphique à l'ouverture (heures) | `24` |
 | `badges` | Liste d'entités affichées en pastilles (4 au maximum) | — |
 | `vtherm` | Fonctions Versatile Thermostat (proposé dans l'éditeur seulement pour une entité VTherm) | `false` |
+| `vtherm_info` | Informations sous les commandes : `heat` (taux de chauffe), `power` (puissance moyenne), `ext` (température extérieure), `bar` (barre de chauffe) | toutes |
+| `vtherm_inhibition_bypass` | Interrupteur de bypass de l'inhibition (fourni par votre plugin d'inhibition) | — |
+| `vtherm_auto_start_stop` | Interrupteur « Enable auto start/stop » du VTherm | trouvé automatiquement |
 
 ```yaml
 type: custom:holm-climate-card
@@ -147,16 +156,19 @@ vtherm: true
 
 | Ce que montre la carte | Détail |
 |---|---|
-| 🪟 **Fenêtre** | Pastille « Fenêtre ouverte » avec un bouton **Ignorer** (contournement de la détection), puis « Fenêtre ignorée » avec **Rétablir**. |
+| 🪟 **Fenêtre** | Pastille fenêtre : **un toucher active ou désactive le bypass** de la détection d'ouverture (« Fenêtre ouverte » → « Fenêtre ignorée »). |
+| ⏸️ **Inhibition** | « Inhibé » quand un plugin d'inhibition suspend la commande des appareils. Si l'interrupteur de bypass est indiqué (`vtherm_inhibition_bypass`), un toucher sur la pastille active ou désactive le bypass. |
+| 🔁 **Auto-start/stop** | Pastille « Arrêt auto » quand le VTherm est arrêté par l'auto-start/stop ; un toucher active ou désactive la fonction. |
 | 🏠 **Présence / mouvement** | « Absent » quand la consigne d'absence s'applique, mouvement détecté dans la pièce. |
 | ⚡ **Délestage** | Pastille rouge et bordure de la carte rouge quand le chauffage est délesté. |
 | 🛡️ **Sécurité** | Sonde muette : chauffe de sécurité, signalée en rouge. |
+| 🩺 **Défaut de chauffe** | Défaut de chauffage ou de refroidissement détecté, signalé en rouge. |
 | 🔒 **Verrou** | Thermostat verrouillé. |
-| 💬 **Raison** | Sous le nom : pourquoi le thermostat est arrêté (fenêtre, délestage, absence…), ou le décompte du minuteur. |
+| 💬 **Raison** | Sous le nom, en français : pourquoi le thermostat est arrêté (fenêtre, auto-start/stop, inhibition, mode central…), ou le décompte du minuteur. |
 | ⏱️ **Minuteur** | Puce **Minuteur** : choisissez un préréglage (boost, confort…) et une durée (30 min à 4 h) ; le décompte s'affiche et le préréglage précédent revient tout seul. **Annuler** à tout moment. |
-| 🔥 **Chauffe** | Taux de chauffe du cycle en cours (et puissance moyenne si connue), température extérieure. |
+| 🔥 **Chauffe** | Taux de chauffe du cycle en cours, puissance moyenne, température extérieure et barre de chauffe — chacun à afficher ou non (`vtherm_info`). |
 
-Seuls les éléments configurés dans votre VTherm sont affichés. Les préréglages Hors-gel, Délestage et Sécurité de VTherm ont leur icône et leur nom en français.
+En pleine largeur, les pastilles se placent à droite du nom pour gagner de la hauteur. Seuls les éléments configurés dans votre VTherm sont affichés. Les préréglages Hors-gel, Délestage et Sécurité de VTherm ont leur icône et leur nom en français.
 
 > Ces fonctions ont été développées à partir de la documentation de Versatile Thermostat et testées avec des états simulés. Un retour d'utilisateur VTherm est le bienvenu dans les [issues](https://github.com/kaaribou/climate-card-holm/issues).
 

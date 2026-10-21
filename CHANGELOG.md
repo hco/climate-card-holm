@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+Retours d'utilisateurs Versatile Thermostat ([#4](https://github.com/kaaribou/climate-card-holm/issues/4)) :
+- **Raisons d'arrêt traduites** (`hvac_off_inhibition`, `hvac_off_auto_start_stop`, `hvac_off_window_detection`…) ; l'arrêt manuel affiche simplement « Éteint ».
+- **Icône à l'arrêt** : plus de ventilateur « A/C » — bouton marche/arrêt, ou radiateur éteint pour un appareil qui ne fait que chauffer (l'option `icon` reste prioritaire).
+- **Pastilles actives au toucher** : bypass de la détection de fenêtre, bypass de l'**inhibition** (interrupteur du plugin à indiquer) et activation de l'**auto-start/stop** (interrupteur trouvé automatiquement).
+- **Inhibition** et **auto-start/stop** signalés (« Inhibé », « Arrêt auto ») ; **défaut de chauffe / de refroidissement** en rouge.
+- **Informations au choix** sous les commandes (`vtherm_info` : taux de chauffe, puissance, température extérieure, barre) ; le texte passe à la ligne au lieu d'être coupé en demi-largeur, et rien n'est affiché à l'arrêt hors température extérieure.
+- **Plus compacte en pleine largeur** : les pastilles se placent à droite du nom.
+
 ## 1.2.0
 - **Option Versatile Thermostat** (`vtherm: true`, proposée dans l'éditeur pour les entités VTherm) ([#4](https://github.com/kaaribou/climate-card-holm/issues/4)) :
   - pastilles fenêtre (avec **Ignorer** / **Rétablir**), présence, mouvement, délestage, sécurité et verrou ;

@@ -42,7 +42,13 @@ HOLM Climate Card remplace la carte thermostat pour vos entités `climate` (clim
 |---|---|
 | ![Volet de choix](docs/images/choix.png) | ![Historique](docs/images/graphique.png) |
 
-### 🆕 Nouveautés de la 1.3.0
+### 🆕 Nouveautés de la 1.4.0
+
+**Pourquoi cet état ?** (Versatile Thermostat) et volets qui tiennent toujours dans la carte, même en demi-largeur sur mobile
+
+![Pourquoi cet état et volet minuteur](docs/images/pourquoi.png)
+
+### Nouveautés de la 1.3.0
 
 **Versatile Thermostat** : arrêt manuel, inhibition, auto-start/stop (pastilles actives au toucher) et, en pleine largeur, pastilles à droite du nom
 
@@ -165,6 +171,7 @@ vtherm: true
 | 🩺 **Défaut de chauffe** | Défaut de chauffage ou de refroidissement détecté, signalé en rouge. |
 | 🔒 **Verrou** | Thermostat verrouillé. |
 | 💬 **Raison** | Sous le nom, en français : pourquoi le thermostat est arrêté (fenêtre, auto-start/stop, inhibition, mode central…), ou le décompte du minuteur. |
+| ℹ️ **Pourquoi cet état ?** | Un toucher sur la ligne d'état (icône ⓘ) ouvre la liste complète des messages du VTherm, traduits : raison de l'arrêt, consigne appliquée (fenêtre, délestage, absence, mode central…), appareil indisponible, initialisation, bypass, défauts. |
 | ⏱️ **Minuteur** | Puce **Minuteur** : choisissez un préréglage (boost, confort…) et une durée (30 min à 4 h) ; le décompte s'affiche et le préréglage précédent revient tout seul. **Annuler** à tout moment. |
 | 🔥 **Chauffe** | Taux de chauffe du cycle en cours, puissance moyenne, température extérieure et barre de chauffe — chacun à afficher ou non (`vtherm_info`). |
 

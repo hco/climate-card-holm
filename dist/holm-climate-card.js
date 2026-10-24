@@ -15,11 +15,12 @@
  *   mouvement / délestage / sécurité / verrou, raison de l'arrêt, preset
  *   temporisé avec décompte, puissance de chauffe et température extérieure
  *   + inhibition (avec bypass), arrêt automatique (auto-start/stop), défaut de chauffe,
- *   pastilles actives au toucher (bypass fenêtre, inhibition, auto-start/stop)
+ *   pastilles actives au toucher (bypass fenêtre, inhibition, auto-start/stop),
+ *   volet « Pourquoi cet état ? » (messages du VTherm traduits) au toucher sur l'état
  * - Pastilles d'état configurables (badges) pour n'importe quel thermostat
  */
 (() => {
-  const VERSION = "1.3.0";
+  const VERSION = "1.4.0";
   const MODE_META = {
     off: { icon: "mdi:power", rgb: "150,160,178", label: "Éteint" },
     heat: { icon: "mdi:fire", rgb: "255,128,48", label: "Chauffe" },
@@ -88,6 +89,30 @@
     central_mode: "mode central", "central mode": "mode central", inhibition: "inhibé",
     fan_only_auto_start_stop: "ventilation (auto-start/stop)", dry_auto_start_stop: "déshumidification (auto-start/stop)",
   };
+  // messages de Versatile Thermostat (specific_states.messages) : [icône, gravité, texte]
+  const VT_MSG = {
+    safety_detected: ["mdi:shield-alert", "bad", "Mode sécurité : la sonde de température ne répond plus"],
+    overpowering_detected: ["mdi:flash-alert", "bad", "Délestage : puissance maximale atteinte"],
+    hvac_off_manual: ["mdi:power", "info", "Éteint manuellement"],
+    hvac_off_auto_start_stop: ["mdi:power-cycle", "warn", "Éteint par l'auto-start/stop"],
+    hvac_off_window_detection: ["mdi:window-open-variant", "warn", "Éteint par la détection d'ouverture"],
+    hvac_off_sleep_mode: ["mdi:sleep", "info", "Éteint par le mode veille"],
+    hvac_off_safety_detection: ["mdi:shield-alert", "bad", "Éteint par le mode sécurité"],
+    hvac_off_central_mode: ["mdi:home-switch-outline", "info", "Éteint par le mode central"],
+    hvac_off_inhibition: ["mdi:pause-circle-outline", "warn", "Thermostat inhibé : commande des appareils suspendue"],
+    hvac_fan_only_auto_start_stop: ["mdi:fan", "warn", "Ventilation seule par l'auto-start/stop"],
+    hvac_dry_auto_start_stop: ["mdi:water-percent", "warn", "Déshumidification par l'auto-start/stop"],
+    target_temp_window_eco: ["mdi:window-open-variant", "warn", "Consigne abaissée : fenêtre ouverte (éco)"],
+    target_temp_window_frost: ["mdi:window-open-variant", "warn", "Consigne abaissée : fenêtre ouverte (hors-gel)"],
+    target_temp_power: ["mdi:flash-alert", "bad", "Consigne abaissée : délestage"],
+    target_temp_central_mode: ["mdi:home-switch-outline", "info", "Consigne imposée par le mode central"],
+    target_temp_activity_detected: ["mdi:motion-sensor", "info", "Consigne : activité détectée"],
+    target_temp_activity_not_detected: ["mdi:motion-sensor-off", "info", "Consigne : pas d'activité dans la pièce"],
+    target_temp_absence_detected: ["mdi:home-export-outline", "info", "Consigne : absence détectée"],
+    target_temp_timed_preset: ["mdi:timer-sand", "info", "Consigne : préréglage temporaire en cours"],
+    not_initialized: ["mdi:progress-clock", "warn", "Thermostat en cours d'initialisation"],
+    underlying_unavailable: ["mdi:lan-disconnect", "bad", "Un appareil piloté est indisponible"],
+  };
   const VT_ASS_REASONS = ["hvac_off_auto_start_stop", "hvac_fan_only_auto_start_stop", "hvac_dry_auto_start_stop"];
   const VT_DURATIONS = [[30, "30 min"], [60, "1 h"], [120, "2 h"], [240, "4 h"]];
   const durTxt = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? " " + String(m % 60).padStart(2, "0") : ""}` : `${Math.max(0, Math.round(m))} min`);
@@ -137,6 +162,8 @@
     setConfig(config) {
       if (!config || !config.entity) throw new Error("Choisis une entité climate dans l'éditeur.");
       this._config = { show_fan: true, show_swing: true, show_preset: true, layout: "full", graph_hours: 24, ...config };
+      const rows = config.grid_options && config.grid_options.rows;
+      this.toggleAttribute("fixed-rows", rows != null && rows !== "auto" && !isNaN(Number(rows)));
       this._opt = {};
       this._drag = null;
       this._sheet = null;
@@ -216,7 +243,7 @@
             <div class="badge"><ha-icon id="bicon"></ha-icon></div>
             <div class="ttl">
               <div class="name" id="name"></div>
-              <div class="status"><span class="dot"></span><span id="status"></span></div>
+              <div class="status" id="statusbox"><span class="dot"></span><span id="status"></span><ha-icon class="why" id="why" icon="mdi:information-outline"></ha-icon></div>
             </div>
             <button class="hcur curbtn" id="hcur" title="Historique de la température"><ha-icon icon="mdi:home-thermometer-outline"></ha-icon><span id="hcurt"></span></button>
           </div>
@@ -270,6 +297,12 @@
       const $ = (id) => root.getElementById(id);
       this.$ = $;
 
+      $("statusbox").addEventListener("click", (e) => {
+        if (!this._vtOn()) return;   // sans VTherm : la ligne d'état ouvre la fiche comme le reste de l'entête
+        e.stopPropagation();
+        this._sheet = "why";
+        this._renderSheet();
+      });
       $("head").addEventListener("click", () => {
         this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: this._config.entity }, bubbles: true, composed: true }));
       });
@@ -511,6 +544,7 @@
         card.dataset.vt = vt.safety || vt.overpower || vt.heatFail || vt.coolFail ? "alert" : (vt.winOpen && !vt.bypass) || (vt.inhibited && !vt.inhBypass) ? "warn" : "";
       } else card.dataset.vt = "";
       $("status").textContent = status;
+      if (vt) card.dataset.why = this._whyList(vt).length ? "msg" : "on"; else delete card.dataset.why;
       this._renderBadges(vt);
       this._renderPower(vt);
       // décompte du preset temporisé entre deux mises à jour
@@ -736,6 +770,11 @@
 
     _renderSheet() {
       const $ = this.$;
+      if (this._sheet === "why") {
+        if (!this._vtOn()) return this._closeSheet();
+        $("sheet-t").textContent = "Pourquoi cet état\u00a0?";
+        return this._renderWhySheet($("opts"));
+      }
       const d = (this._defs || []).find((x) => x.key === this._sheet);
       if (!d) return this._closeSheet();
       $("sheet-t").textContent = d.title;
@@ -756,6 +795,44 @@
         });
         box.appendChild(b);
       });
+      this._card.classList.add("sheet-open");
+    }
+    // « Pourquoi cet état ? » : messages de VTherm traduits + états déduits (bypass, défauts, verrou…)
+    _whyList(vt) {
+      const a = this._so.attributes, sp = a.specific_states && typeof a.specific_states === "object" ? a.specific_states : {};
+      const name = (id) => (this._hass && this._hass.states[id] && this._hass.states[id].attributes.friendly_name) || id;
+      const out = [], seen = new Set();
+      const add = (k, icon, sev, txt, sub) => { if (seen.has(k)) return; seen.add(k); out.push({ icon, sev, txt, sub }); };
+      const msgs = Array.isArray(sp.messages) ? sp.messages.map(String) : [];
+      if (vt.safety) msgs.unshift("safety_detected");
+      if (vt.overpower) msgs.unshift("overpowering_detected");
+      if (vt.offReason) msgs.push(String(vt.offReason));
+      if (vt.modeReason && VT_MSG[String(vt.modeReason)]) msgs.push(String(vt.modeReason));
+      if (vt.inhibited) msgs.push("hvac_off_inhibition");
+      for (const k of msgs) {
+        if (k === "hvac_off_manual" && this._so.state === "off" && msgs.length > 1) continue;
+        const m = VT_MSG[k];
+        let sub = "";
+        if (k === "not_initialized" && Array.isArray(sp.not_initialized_entities) && sp.not_initialized_entities.length) sub = sp.not_initialized_entities.map(name).join(", ");
+        if (k === "underlying_unavailable" && Array.isArray(sp.unavailable_underlying_entities)) sub = sp.unavailable_underlying_entities.map(name).join(", ");
+        if (k === "target_temp_timed_preset" && vt.timed) sub = `${(PRESET_META[vt.timed.preset] || { label: cap(vt.timed.preset) }).label}, encore ${durTxt(vt.timed.remaining ?? 0)}`;
+        if (m) add(k, m[0], m[1], m[2], sub);
+        else add(k, "mdi:information-outline", "info", cap(k.replace(/^hvac_(off_)?/, "")), "");
+      }
+      if (vt.timed && !seen.has("target_temp_timed_preset")) add("timed", "mdi:timer-sand", "info", "Préréglage temporaire en cours", `${(PRESET_META[vt.timed.preset] || { label: cap(vt.timed.preset) }).label}, encore ${durTxt(vt.timed.remaining ?? 0)}`);
+      if (vt.inhBypass) add("inh_bypass", "mdi:debug-step-over", "info", "Bypass de l'inhibition activé", "");
+      if (vt.bypass) add("win_bypass", "mdi:window-open-variant", "info", "Détection d'ouverture ignorée (bypass)", "");
+      if (vt.heatFail) add("heat_fail", "mdi:radiator-disabled", "bad", "Défaut de chauffage détecté", "La température ne monte pas malgré la chauffe");
+      if (vt.coolFail) add("cool_fail", "mdi:snowflake-alert", "bad", "Défaut de refroidissement détecté", "");
+      if (vt.locked) add("locked", "mdi:lock", "info", "Thermostat verrouillé", "");
+      if (sp.is_recalculate_scheduled === true) add("recalc", "mdi:progress-clock", "info", "Appareil piloté en cours de mise à jour", "");
+      return out;
+    }
+    _renderWhySheet(box) {
+      const vt = this._vt(), list = this._whyList(vt);
+      box.dataset.n = "why";
+      box.innerHTML = list.length ? list.map((m) => `<div class="why-r ${m.sev}"><ha-icon icon="${m.icon}"></ha-icon><div><b>${m.txt}</b>${m.sub ? `<small>${m.sub}</small>` : ""}</div></div>`).join("")
+        : `<div class="why-r ok"><ha-icon icon="mdi:check-circle-outline"></ha-icon><div><b>${this._so.state === "off" ? "Éteint" : "Aucune alerte"}</b><small>${this._so.state === "off" ? "Le thermostat est à l'arrêt." : "Le thermostat suit sa consigne normalement."}</small></div></div>`;
       this._card.classList.add("sheet-open");
     }
     _renderTimedSheet(box) {
@@ -798,14 +875,17 @@
 
     static css() {
       return `
-      :host { display: block; height: 100%; }
+      /* hauteur imposée seulement si la carte a une hauteur fixe (grid_options.rows chiffré) :
+         en « auto », forcer 100 % provoquait des recalculs en boucle et un rebond du défilement sur iOS */
+      :host { display: block; }
+      :host([fixed-rows]) { height: 100%; }
       ha-card {
         display: block;
         --m: 150,160,178;
         /* fond toujours sombre : texte clair quel que soit le thème Home Assistant */
         --tx: #e6f2f5;
         --tx2: rgba(220,235,240,.62);
-        position: relative; overflow: hidden; height: 100%; box-sizing: border-box;
+        position: relative; overflow: hidden; box-sizing: border-box;
         container-type: inline-size;
         border-radius: var(--ha-card-border-radius, 20px);
         background: linear-gradient(160deg, rgba(20,28,38,.92), rgba(10,15,22,.96));
@@ -816,6 +896,7 @@
         -webkit-tap-highlight-color: transparent;
         user-select: none;
       }
+      :host([fixed-rows]) ha-card { height: 100%; }
       ha-card.active { box-shadow: 0 10px 30px rgba(0,0,0,.35), 0 0 22px -6px rgba(var(--m), .45), inset 0 1px 0 rgba(255,255,255,.05); }
       button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
 
@@ -897,7 +978,13 @@
       .ttl { min-width: 0; flex: 1; }
       .name { font-size: 14px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .status { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--tx2); margin-top: 2px; white-space: nowrap; overflow: hidden; }
-      .status span:last-child { overflow: hidden; text-overflow: ellipsis; }
+      #status { overflow: hidden; text-overflow: ellipsis; }
+      .why { display: none; --mdc-icon-size: 14px; flex: 0 0 auto; opacity: .75; }
+      ha-card[data-why] .why { display: inline-flex; }
+      ha-card[data-why] .status { cursor: pointer; }
+      ha-card[data-why="msg"] .why { opacity: 1; color: rgb(120,190,255); }
+      ha-card[data-why="msg"][data-vt="warn"] .why { color: rgb(245,190,90); }
+      ha-card[data-why="msg"][data-vt="alert"] .why { color: rgb(255,140,135); }
       .dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--m), .7); }
       ha-card.active .dot { background: rgb(var(--m)); box-shadow: 0 0 6px rgb(var(--m)); animation: pulse 1.8s ease-in-out infinite; }
       @keyframes pulse { 50% { opacity: .35; } }
@@ -905,7 +992,8 @@
       .main { display: flex; flex-direction: column; gap: 10px; flex: 1; }
 
       /* ---------- dial ---------- */
-      .dialbox { position: relative; width: 100%; max-width: 210px; margin: 0 auto; aspect-ratio: 1; }
+      /* roue carrée de taille explicite (pas d'aspect-ratio : source de recalculs sur iOS) */
+      .dialbox { position: relative; width: min(100%, 210px); height: min(calc(100cqi - 24px), 210px); margin: 0 auto; }
       .dialbox > svg { position: absolute; left: 0; top: 0; width: 100%; height: auto; overflow: visible; touch-action: none; }
       .track { fill: none; stroke: rgba(255,255,255,.08); stroke-width: 12; stroke-linecap: round; }
       .ticks line { stroke: rgba(255,255,255,.14); stroke-width: 1.4; stroke-linecap: round; }
@@ -1033,7 +1121,18 @@
       /* ---------- sheet ---------- */
       .sheet { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(4,8,12,.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); opacity: 0; pointer-events: none; transition: opacity .2s; }
       ha-card.sheet-open .sheet { opacity: 1; pointer-events: auto; }
-      .sheet-in { width: 100%; box-sizing: border-box; padding: 10px; background: rgba(18,26,36,.97); border-top: 1px solid rgba(var(--m), .3); border-radius: 18px 18px 0 0; transform: translateY(20px); transition: transform .22s; }
+      .sheet-in { width: 100%; max-height: 100%; display: flex; flex-direction: column; box-sizing: border-box; padding: 10px; background: rgba(18,26,36,.97); border-top: 1px solid rgba(var(--m), .3); border-radius: 18px 18px 0 0; transform: translateY(20px); transition: transform .22s; }
+      /* le volet ne dépasse jamais la carte : l'entête reste visible, le contenu défile */
+      .sheet-in > .opts { min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+      .sheet-h { flex: 0 0 auto; }
+      .why-r { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border-radius: 12px; font-size: 12.5px; background: rgba(255,255,255,.05); }
+      .why-r ha-icon { --mdc-icon-size: 18px; flex: 0 0 auto; color: var(--tx2); margin-top: 1px; }
+      .why-r b { display: block; font-weight: 600; line-height: 1.3; }
+      .why-r small { display: block; margin-top: 2px; font-size: 11px; color: var(--tx2); white-space: normal; }
+      .why-r.info ha-icon { color: rgb(120,190,255); }
+      .why-r.ok ha-icon { color: rgb(62,201,122); }
+      .why-r.warn { background: rgba(245,166,35,.12); } .why-r.warn ha-icon { color: rgb(245,180,70); }
+      .why-r.bad { background: rgba(239,83,80,.14); } .why-r.bad ha-icon { color: rgb(255,120,115); }
       ha-card.sheet-open .sheet-in { transform: none; }
       .sheet-h { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--tx2); text-transform: uppercase; letter-spacing: .06em; margin: 0 2px 8px; }
       .sheet-h button { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.07); }
@@ -1070,7 +1169,7 @@
       .vpb { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
       .vpb i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, rgba(255,140,60,.7), rgb(255,110,30)); transition: width .6s; }
       .tpa, .tpl, .tpr { grid-column: 1 / -1; }
-      .tpa { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; font-size: 12.5px; background: rgba(var(--m), .16); box-shadow: inset 0 0 0 1px rgba(var(--m), .35); }
+      .tpa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; border-radius: 12px; font-size: 12.5px; background: rgba(var(--m), .16); box-shadow: inset 0 0 0 1px rgba(var(--m), .35); }
       .tpa > span { flex: 1 1 auto; min-width: 0; }
       .tpa ha-icon { --mdc-icon-size: 18px; color: rgb(var(--m)); }
       .tpc { height: 26px; padding: 0 10px; border-radius: 13px; font-size: 11.5px; font-weight: 700; background: rgba(255,255,255,.12); }
@@ -1099,8 +1198,19 @@
         .lbl { font-size: 9px; }
         .mode { height: 34px; }
         .chip { font-size: 11px; padding: 0 4px; }
-        .opts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .opt { font-size: 11.5px; padding: 0 6px; gap: 4px; }
+        .opts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+        .opt { height: 30px; font-size: 11.5px; padding: 0 6px; gap: 4px; }
+        .opt ha-icon { --mdc-icon-size: 15px; }
+        .dialbox { height: min(calc(100cqi - 18px), 210px); }
+        .sheet-in { padding: 8px; }
+        .sheet-h { margin-bottom: 6px; }
+        .tpa { padding: 6px 8px; font-size: 11.5px; }
+        .tpa > ha-icon { display: none; }
+        .tpl { margin-top: 2px; font-size: 10px; }
+        .tpr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+        .opt.dur ha-icon { display: none; }
+        .opt.dur { justify-content: center; }
+        .why-r { padding: 6px 8px; font-size: 11.5px; gap: 7px; }
       }
       /* ---------- medium : libellés des modes ---------- */
       @container (min-width: 300px) {
@@ -1117,7 +1227,7 @@
         ha-card:not([data-layout="compact"]) .vb { grid-column: 2; grid-row: 1; margin: 0; justify-content: flex-end; max-width: 62cqi; }
         ha-card:not([data-layout="compact"]) .main { grid-column: 1 / -1; }
         .main { flex-direction: row; align-items: center; gap: 16px; }
-        .dialbox { flex: 0 0 200px; margin: 0; }
+        .dialbox { flex: 0 0 200px; width: 200px; height: 200px; margin: 0; }
         .side { flex: 1; min-width: 0; gap: 10px; }
         .mode { height: 42px; }
         .chip { height: 38px; font-size: 13px; }

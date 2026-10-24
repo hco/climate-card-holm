@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+- **Pourquoi cet état ?** (Versatile Thermostat, [#4](https://github.com/kaaribou/climate-card-holm/issues/4)) : un toucher sur la ligne d'état (icône ⓘ, colorée quand il y a un message) ouvre la liste des messages du VTherm traduits — raison de l'arrêt, consigne appliquée, délestage, sécurité, appareil piloté indisponible (avec son nom), initialisation, bypass, défauts, verrou.
+- **Volets toujours entiers** ([#5](https://github.com/kaaribou/climate-card-holm/issues/5)) : le volet Minuteur (et les autres) ne dépasse plus de la carte ; l'entête et le bouton de fermeture restent visibles, le contenu défile si besoin. Volets plus compacts en demi-largeur (boutons moins hauts, durées sur 2 colonnes).
+- **Rebond du défilement sur iPhone** ([#5](https://github.com/kaaribou/climate-card-holm/issues/5)) : la carte ne force plus sa hauteur à 100 % quand Home Assistant la dimensionne en « auto » (seulement avec une hauteur fixe `grid_options.rows`), et la roue a une taille explicite au lieu d'un rapport largeur / hauteur.
+
 ## 1.3.0
 Retours d'utilisateurs Versatile Thermostat ([#4](https://github.com/kaaribou/climate-card-holm/issues/4)) :
 - **Raisons d'arrêt traduites** (`hvac_off_inhibition`, `hvac_off_auto_start_stop`, `hvac_off_window_detection`…) ; l'arrêt manuel affiche simplement « Éteint ».
